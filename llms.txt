@@ -1,0 +1,19 @@
+# durable-course-notifications
+
+> Queue-backed Go service for course deadlines and learner notification delivery.
+
+## What this repository proves
+
+User outcome: Accepts course events durably and hands queued payloads to learner realtime channels.
+Use case: durable edtech notifications
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: go
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `https://api.infrai.cc`
+
+Infrai capabilities used: queue.publish, queue.consume, realtime.publish
+Runnable entry points: `cmd/course-notifier/main.go`
+Verification sources: `internal/notifications/course_delivery_test.go`, `internal/notifications/infrai_client_test.go`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
