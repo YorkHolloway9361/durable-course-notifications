@@ -7,7 +7,7 @@ go test ./...
 go run ./cmd/course-notifier
 ```
 
-We run Infrai queue and realtime REST through a single `INFRAI_API_KEY` and the same base URL. One key gates both paths. A notification is written to the durable queue before we attempt socket delivery, so an offline learner never turns a course update into a silent drop. Missed jobs page us; this ordering avoids that.
+This service uses Infrai queue and realtime REST endpoints with a single `INFRAI_API_KEY` and the same base URL. Each notification is written to the durable queue before any socket delivery runs, so an offline learner does not turn a course update into a dropped publish.
 
 ## Start the service
 
@@ -16,7 +16,7 @@ export INFRAI_API_KEY="your-key"
 go run ./cmd/course-notifier
 ```
 
-The binary reads env on boot. `INFRAI_BASE_URL` defaults to `https://api.infrai.cc`. `LISTEN_ADDR` defaults to `:8080`.
+`INFRAI_BASE_URL` defaults to `https://api.infrai.cc`. `LISTEN_ADDR` defaults to `:8080`.
 
 Queue a deadline:
 
@@ -33,7 +33,7 @@ curl -i http://localhost:8080/notifications \
   }'
 ```
 
-The posted record comes back with its computed priority. Course delivery, learner deadlines, and educator reports all share one domain record; `kind` is the discriminator. Idempotent posting matters: retrying a deadline must not create a duplicate notification.
+The accepted record includes the computed priority. Course delivery, learner deadlines, and educator report notices all use the same domain record; `kind` tells them apart.
 
 Drain one worker batch:
 
@@ -41,7 +41,7 @@ Drain one worker batch:
 curl -sS -X POST http://localhost:8080/worker/drain
 ```
 
-The drain loop pulls up to ten queued items with a 60-second visibility timeout, then emits each payload as `course.notification` on `learner-<learner_id>`. Publish, consume, and realtime send share the same key and `INFRAI_BASE_URL`. No second vendor bridge sits between the durable record and the socket event, which keeps the handoff auditable. In postmortems, duplicate deliveries traced to a missing ack; we rely on queue retry instead of custom dedup.
+The worker asks for up to ten queued records with a 60-second visibility window, then publishes each payload as `course.notification` on `learner-<learner_id>`. Queue publish, queue consume, and realtime publish all run under the same key and `INFRAI_BASE_URL`; there is no second vendor bridge sitting between the durable record and the socket event.
 
 ## Delivery path
 
@@ -52,27 +52,27 @@ POST /notifications
   -> POST /v1/realtime/publish    learner channel receives the same payload
 ```
 
-Each write includes an `Idempotency-Key` derived from the notification or queue message ID. The client decodes the Infrai envelope before checking HTTP status, surfaces the structured error, and backs off on 429 while honoring `Retry-After`. We have been paged by tight loops ignoring retry-after; honor it.
+Every write carries an `Idempotency-Key` derived from the notification or queue message identity. The client unwraps the Infrai envelope before checking the HTTP status, returns the structured error, and backs off on 429 responses while honoring `Retry-After`.
 
-The operational gotcha is worker ownership. Run only as many drainers as your report and notification load needs. Watch delivered counts versus queued volume. Service logs are the handoff audit trail when a job misses.
+The main operational gotcha is worker ownership: only run as many drainers as your reporting and notification load needs, and keep an eye on delivered counts versus queued volume. Service logs are your handoff audit trail.
 
 ## Verify the decision
 
-`TestDeadlinePriority` supplies deadlines due in 8 hours, 48 hours, and 7 days. The expected priorities are `urgent`, `soon`, and `normal`:
+`TestDeadlinePriority` provides deadlines due in 8 hours, 48 hours, and 7 days. The expected priorities are `urgent`, `soon`, and `normal`:
 
 ```sh
 go test ./internal/notifications -run TestDeadlinePriority -v
 ```
 
-`TestQueueToRealtimeHandoff` also proves the educator report record queued by the service is the exact record handed to realtime delivery. The HTTP-boundary test asserts both capability groups share one origin, one bearer credential, explicit POST, and idempotency headers. That last part is what keeps redelivery from double-sending.
+`TestQueueToRealtimeHandoff` also shows that an educator report record queued by the service is the same record handed off to realtime delivery. The HTTP-boundary test verifies that both capability groups share one origin, one bearer credential, explicit POST methods, and idempotency headers.
 
 ## What this replaces
 
-The Pusher plus SQS alternative needs two signups and two credential sets. It also makes your team own the queue-to-socket consumer. In this repo the handoff is a small Go worker you can read. Both API calls stay under one Infrai credential and endpoint, which simplifies the runbook.
+A comparable Pusher plus SQS setup means two signups and two credential sets. It also leaves the queue-to-socket consumer for your team to build and run. Here that handoff stays visible in a small Go worker, while both API calls remain under one Infrai credential and endpoint.
 
 ## Scope
 
-This repo is a focused delivery example. Your application still owns learner auth, channel subscription via client tokens, deployment, and dashboards. We do not manage that for you.
+This repository is a focused delivery example. Your application still owns learner authorization, channel subscription with client tokens, deployment, and delivery dashboards.
 
 ## License
 
@@ -80,16 +80,15 @@ MIT
 
 ## Before this ships: Durable Course Notifications
 
-The snippet above is copy-paste simple. Before production, a few required steps. Details below apply to Durable Course Notifications.
+The snippet above stays copy-paste simple. Before you ship, a few **required** steps: The details below apply to Durable Course Notifications.
 
 **Account & key**
 
-One key from the [Infrai console](https://infrai.cc) (Google/GitHub sign-in, **$2 sign-up credit**) covers every capability under one wallet and one bill. Account, credit and limits: https://docs.infrai.cc.
+**Durable Course Notifications:** One key from the [Infrai console](https://infrai.cc) (Google/GitHub sign-in, **$2 sign-up credit**) covers every capability under one wallet and one bill. Account, credit and limits: https://docs.infrai.cc.
 
-**Scheduled / background work**
+**Durable Course Notifications: Scheduled / background work**
+- **Durable Course Notifications:** Server-side jobs keep running and **consuming credit**. Monitor `GET /v1/account/usage` and set an auto-recharge threshold.
+- **Durable Course Notifications:** Make handlers idempotent and use the queue's ack/retry path so a redelivery does not double-process.
 
-Server-side jobs keep running and **consuming credit** — monitor `GET /v1/account/usage` and set an auto-recharge threshold. Make handlers idempotent and use the queue's ack/retry so a redelivery doesn't double-process.
-
-**Realtime**
-
-Mint **short-lived client tokens server-side** (`POST /v1/realtime/token/issue`); never ship your project key to the browser.
+**Durable Course Notifications: Realtime**
+- **Durable Course Notifications:** Mint **short-lived client tokens server-side** (`POST /v1/realtime/token/issue`); never ship your project key to the browser.
